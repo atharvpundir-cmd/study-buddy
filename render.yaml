@@ -1,0 +1,18 @@
+# One-click deploy on Render: https://render.com/deploy?repo=https://github.com/atharvpundir-cmd/study-buddy
+services:
+  - type: web
+    name: study-buddy
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --workers 1 --worker-class gthread --threads 16 --timeout 600 --bind 0.0.0.0:$PORT
+    healthCheckPath: /healthz
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: STUDY_BUDDY_ACCESS_CODE
+        sync: false
+      - key: STUDY_BUDDY_TRUST_PROXY
+        value: "1"
+      - key: PYTHON_VERSION
+        value: "3.12.7"
