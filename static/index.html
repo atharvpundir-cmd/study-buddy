@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>StudyBuddy</title>
+  <meta name="description" content="Upload your study files and get notes, quizzes, flashcards and explanations from a friendly AI tutor.">
+  <meta name="theme-color" content="#5b4fe0">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.18.7/dist/katex.min.css" integrity="sha384-JctiRyLzXCrSoOOzFlSoWLdyzQl7OrrRnhyeBmzB6ZWtcjccUyc8lCQJqIbs3uQX" crossorigin="anonymous">
+  <link rel="stylesheet" href="/static/style.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/marked@18.0.14/lib/marked.umd.js" integrity="sha384-2vpGtuKqJvFlwJqYnf/wUMuzUfhUnYBt9oay0e2yaFcq0Dh6/aEbQ8YAOeKGzlYo" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.4.16/dist/purify.min.js" integrity="sha384-a7SzOxErzJ3ZpQz0zJ32d67dSitNzPcbfybc/ykU9KJhMgZkwqfSxlhhdJRS+XGL" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.18.7/dist/katex.min.js" integrity="sha384-+7Keh381hSkXmXqnjC0JBM/kzsN6TFj+wMKychSLjTvJ8/0ElMde2uKl8i6p6Buj" crossorigin="anonymous"></script>
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#step-files">Skip to start</a>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">📚</span>
+      <span class="brand-name">StudyBuddy</span>
+    </div>
+    <div class="level" role="group" aria-labelledby="level-label">
+      <span id="level-label" class="level-label">I'm in</span>
+      <div id="level-buttons" class="level-buttons"></div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <div id="demo-banner" class="banner" hidden>
+      <strong>Demo mode:</strong> StudyBuddy has no AI key yet, so you'll see sample answers.
+      Add an <code>ANTHROPIC_API_KEY</code> to get real help (see the README).
+    </div>
+
+    <section class="card" id="step-files" aria-labelledby="files-heading">
+      <h2 id="files-heading"><span class="step-num" aria-hidden="true">1</span> Add what you're studying</h2>
+
+      <div id="dropzone" class="dropzone">
+        <div class="drop-emoji" aria-hidden="true">📎</div>
+        <p class="drop-title">Drop your files here</p>
+        <p class="drop-hint">PDF, Word, PowerPoint, photos or text – up to <span id="max-files">10</span> files</p>
+        <div class="drop-buttons">
+          <button type="button" class="btn btn-primary" id="choose-files">📁 Choose files</button>
+          <button type="button" class="btn btn-soft" id="take-photo">📷 Take a photo</button>
+        </div>
+        <input type="file" id="file-input" multiple hidden>
+        <input type="file" id="photo-input" accept="image/*" capture="environment" hidden>
+      </div>
+
+      <ul id="file-list" class="file-list" aria-label="Your files"></ul>
+      <p id="file-error" class="error-text" role="alert" hidden></p>
+
+      <label for="topic" class="text-label">…or type a topic, a question, or paste your notes</label>
+      <textarea id="topic" rows="4" placeholder="e.g. The water cycle · How do I solve 2x + 5 = 13? · Causes of World War I"></textarea>
+    </section>
+
+    <section class="card" aria-labelledby="tools-heading">
+      <h2 id="tools-heading"><span class="step-num" aria-hidden="true">2</span> What would you like?</h2>
+      <div class="tools" id="tools">
+        <button type="button" class="tool" data-mode="notes"><span class="tool-emoji" aria-hidden="true">📝</span><span class="tool-name">Notes</span><span class="tool-desc">Tidy study notes</span></button>
+        <button type="button" class="tool" data-mode="summary"><span class="tool-emoji" aria-hidden="true">📋</span><span class="tool-name">Summary</span><span class="tool-desc">Just the main points</span></button>
+        <button type="button" class="tool" data-mode="explain"><span class="tool-emoji" aria-hidden="true">💡</span><span class="tool-name">Explain it</span><span class="tool-desc">Step by step</span></button>
+        <button type="button" class="tool" data-mode="quiz"><span class="tool-emoji" aria-hidden="true">❓</span><span class="tool-name">Quiz me</span><span class="tool-desc">Test yourself</span></button>
+        <button type="button" class="tool" data-mode="flashcards"><span class="tool-emoji" aria-hidden="true">🃏</span><span class="tool-name">Flashcards</span><span class="tool-desc">Flip and learn</span></button>
+        <button type="button" class="tool" data-mode="chat"><span class="tool-emoji" aria-hidden="true">💬</span><span class="tool-name">Ask a tutor</span><span class="tool-desc">Chat about anything</span></button>
+      </div>
+      <div class="count-row">
+        <label for="count">Questions or cards:</label>
+        <select id="count">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="15">15</option>
+          <option value="20">20</option>
+        </select>
+      </div>
+    </section>
+
+    <section class="card output" id="output" aria-labelledby="output-title" hidden>
+      <div class="output-head">
+        <h2 id="output-title" tabindex="-1">Your notes</h2>
+        <div class="output-actions" id="output-actions">
+          <button type="button" class="btn btn-small" id="stop-btn" hidden>⏹ Stop</button>
+          <button type="button" class="btn btn-small" id="newchat-btn" hidden>🧹 New chat</button>
+          <button type="button" class="btn btn-small" id="copy-btn">📋 Copy</button>
+          <button type="button" class="btn btn-small" id="download-btn">⬇️ Save</button>
+          <button type="button" class="btn btn-small" id="print-btn">🖨️ Print</button>
+        </div>
+      </div>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="error" class="error" role="alert" hidden></div>
+
+      <div id="result" class="result markdown"></div>
+
+      <div id="chat" class="chat" hidden>
+        <div id="chat-log" class="chat-log"></div>
+        <form id="chat-form" class="chat-form">
+          <label for="chat-input" class="visually-hidden">Your question</label>
+          <textarea id="chat-input" rows="2" placeholder="Ask anything… (Enter to send, Shift+Enter for a new line)"></textarea>
+          <button type="submit" class="btn btn-primary" id="chat-send">Send</button>
+        </form>
+        <p class="chat-hint" id="chat-files-hint"></p>
+      </div>
+
+      <div id="next-steps" class="next-steps" hidden>
+        <span class="next-label">Next:</span>
+        <button type="button" class="btn btn-soft" data-next="quiz">❓ Quiz me on this</button>
+        <button type="button" class="btn btn-soft" data-next="flashcards">🃏 Make flashcards</button>
+        <button type="button" class="btn btn-soft" data-next="followup">💬 Ask a follow-up</button>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>StudyBuddy uses AI, which can make mistakes – check important facts with your teacher or textbook.</p>
+      <p>Your files are only used to answer you and aren't saved by StudyBuddy.</p>
+    </footer>
+  </main>
+
+  <dialog id="code-dialog" class="dialog">
+    <form method="dialog" id="code-form">
+      <h2>Enter your class code</h2>
+      <p>Your teacher will give you a code to use StudyBuddy.</p>
+      <label for="code-input" class="visually-hidden">Class code</label>
+      <input id="code-input" autocomplete="off" required>
+      <p id="code-error" class="error-text" hidden>That code didn't work. Check it and try again.</p>
+      <div class="dialog-buttons"><button class="btn btn-primary" value="ok">Continue</button></div>
+    </form>
+  </dialog>
+</body>
+</html>
