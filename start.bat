@@ -22,6 +22,5 @@ if not exist .env (
   echo Tip: put your Anthropic API key in the .env file to get real AI answers.
 )
 
-start "" http://localhost:5000
-.venv\Scripts\python app.py
+.venv\Scripts\python app.py --open
 pause

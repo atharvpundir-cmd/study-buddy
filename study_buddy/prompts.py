@@ -58,6 +58,7 @@ Uploaded files:
 Formatting:
 - Use Markdown: headings, bullet points, **bold** key terms, and tables where useful.
 - Write maths with LaTeX: \\( ... \\) for inline maths and \\[ ... \\] for display maths. Never use single dollar signs for maths.
+- Write chemical formulas upright, e.g. \\(\\mathrm{H_2O}\\) or \\(\\mathrm{6CO_2 + 6H_2O \\rightarrow C_6H_{12}O_6 + 6O_2}\\).
 - Do not start with filler like "Great question!" - get straight to helping."""
 
 # Text modes stream Markdown back to the browser.
@@ -84,8 +85,8 @@ TEXT_MODES = {
             "Explain this so the student really understands it. Start with the simplest version "
             "in one or two sentences, then build up step by step, use an analogy or everyday "
             "example, work through an example if it is a problem, and finish with a quick "
-            "'Check your understanding' question followed by its answer on a line starting "
-            "with 'Answer:'."
+            "'Check your understanding' question. Put its answer inside "
+            "<details><summary>Show answer</summary>...</details> so the student can try first."
         ),
     },
     "chat": {

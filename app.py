@@ -3,9 +3,11 @@
 import hmac
 import json
 import os
+import re
 from pathlib import Path
 
 from flask import Flask, Response, jsonify, request, send_from_directory, stream_with_context
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -30,16 +32,35 @@ _load_dotenv(BASE_DIR / ".env")
 from study_buddy import ai, files, prompts  # noqa: E402  (after .env so settings apply)
 from study_buddy.limits import RateLimiter  # noqa: E402
 
-MAX_TEXT_CHARS = 50_000
+MAX_TEXT_CHARS = 50_000  # anything a student types
+MAX_REPLY_CHARS = 300_000  # a StudyBuddy answer carried in chat history (long notes can be big)
 MAX_HISTORY = 40
 DEFAULT_COUNT = {"quiz": 10, "flashcards": 12}
 
 app = Flask(__name__, static_folder=None)
-app.config["MAX_CONTENT_LENGTH"] = files.MAX_TOTAL_BYTES + 2 * 1024 * 1024  # files plus form fields
+app.config["MAX_CONTENT_LENGTH"] = files.MAX_TOTAL_BYTES + 8 * 1024 * 1024  # files plus form fields
+app.config["MAX_FORM_MEMORY_SIZE"] = 8 * 1024 * 1024  # a long chat history is one big form field
 
 ACCESS_CODE = os.environ.get("STUDY_BUDDY_ACCESS_CODE", "").strip()
-TRUST_PROXY = os.environ.get("STUDY_BUDDY_TRUST_PROXY", "").strip().lower() in ("1", "true", "yes")
+# Students in one classroom usually share an internet address, so the main limit is per
+# browser; a looser per-address limit stops anyone dodging it by inventing new browser IDs.
 limiter = RateLimiter.from_spec(os.environ.get("STUDY_BUDDY_RATE_LIMIT", "30/600"))
+network_limiter = RateLimiter.from_spec(os.environ.get("STUDY_BUDDY_NETWORK_RATE_LIMIT", "300/600"))
+CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+def _proxy_count(value: str) -> int:
+    """How many proxies sit in front of the app ('1'/'true' means one)."""
+    value = value.strip().lower()
+    if value in ("true", "yes"):
+        return 1
+    return int(value) if value.isdigit() else 0
+
+
+PROXIES = _proxy_count(os.environ.get("STUDY_BUDDY_TRUST_PROXY", ""))
+if PROXIES:
+    # Use the client address the trusted proxy saw, not one the browser could fake.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=PROXIES, x_proto=PROXIES)
 
 
 class BadInput(ValueError):
@@ -48,14 +69,6 @@ class BadInput(ValueError):
 
 # ---------------------------------------------------------------------------
 # Helpers
-
-
-def _client_ip() -> str:
-    if TRUST_PROXY:
-        forwarded = request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-    return request.remote_addr or "unknown"
 
 
 def _error(message: str, status: int, **extra):
@@ -68,11 +81,21 @@ def _check_access():
         given = request.headers.get("X-Access-Code", "")
         if not hmac.compare_digest(given.encode(), ACCESS_CODE.encode()):
             return _error("Please enter the class code to use StudyBuddy.", 401, needs_code=True)
-    wait = limiter.retry_after(_client_ip())
+    address = request.remote_addr or "unknown"
+    client_id = request.headers.get("X-Client-Id", "")
+    student = f"browser:{client_id}" if CLIENT_ID_RE.match(client_id) else f"address:{address}"
+    wait = limiter.retry_after(student)
     if wait:
-        minutes = max(1, round(wait / 60))
-        return _error(f"You've asked a lot of questions! Take a short break and try again in about {minutes} minute{'s' if minutes > 1 else ''}.", 429)
+        return _error(f"You've asked a lot of questions! Take a short break and try again in about {_minutes(wait)}.", 429)
+    wait = network_limiter.retry_after(address)
+    if wait:
+        return _error(f"StudyBuddy is very busy on your network right now. Please try again in about {_minutes(wait)}.", 429)
     return None
+
+
+def _minutes(seconds: int) -> str:
+    minutes = max(1, round(seconds / 60))
+    return f"{minutes} minute{'s' if minutes > 1 else ''}"
 
 
 def _level() -> str:
@@ -108,8 +131,10 @@ def _history() -> list:
         if not isinstance(turn, dict) or turn.get("role") != expected or not isinstance(turn.get("content"), str):
             raise BadInput("Something went wrong with the chat. Try starting a new one.")
         content = turn["content"].strip()
-        if not content or len(content) > MAX_TEXT_CHARS:
-            raise BadInput("Each message needs some text, and it can't be too long.")
+        if not content:
+            raise BadInput("Something went wrong with the chat. Try starting a new one.")
+        if len(content) > (MAX_TEXT_CHARS if expected == "user" else MAX_REPLY_CHARS):
+            raise BadInput(f"Your message is too long. Please keep it under {MAX_TEXT_CHARS:,} characters.")
         cleaned.append({"role": expected, "content": content})
     if cleaned[-1]["role"] != "user":
         raise BadInput("Type a question to ask StudyBuddy.")
@@ -282,8 +307,15 @@ def security_headers(response):
 
 
 if __name__ == "__main__":
+    import sys
+    import threading
+    import webbrowser
+
     port = int(os.environ.get("PORT", "5000"))
-    print(f"\n  📚 StudyBuddy is running!  Open http://localhost:{port} in your browser.\n")
+    url = f"http://localhost:{port}"
+    print(f"\n  📚 StudyBuddy is running!  Open {url} in your browser.\n")
     if ai.demo_mode():
         print("  (Demo mode: set ANTHROPIC_API_KEY to get real AI answers.)\n")
+    if "--open" in sys.argv:  # the start scripts open the browser once the server is up
+        threading.Timer(1.5, webbrowser.open, args=[url]).start()
     app.run(host=os.environ.get("HOST", "127.0.0.1"), port=port, threaded=True)

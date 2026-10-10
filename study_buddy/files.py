@@ -19,6 +19,8 @@ ACCEPTED = sorted([".pdf", ".docx", ".pptx", *IMAGE_TYPES, *TEXT_TYPES])
 
 MAX_IMAGE_EDGE = 1568  # Claude's recommended longest edge; bigger images are scaled down
 MAX_IMAGE_BYTES = 3_750_000  # 5 MB once base64-encoded
+MAX_IMAGE_PIXELS = 50_000_000  # 50 megapixels, well above any phone photo
+MAX_UNZIPPED_BYTES = 200 * 1024 * 1024  # Word/PowerPoint files are zips; refuse "zip bombs"
 
 CONVERT_HINTS = {
     ".doc": "Please save it as .docx or PDF and try again.",
@@ -73,18 +75,25 @@ def _image_block(name: str, ext: str, data: bytes) -> dict:
     if Image is not None:
         try:
             img = Image.open(io.BytesIO(data))
+            width, height = img.size
+            if width * height > MAX_IMAGE_PIXELS:  # checked before decoding, so a tiny file can't use huge memory
+                raise FileError(f"“{name}” is too big. Try a smaller photo or a screenshot.")
             too_big = max(img.size) > MAX_IMAGE_EDGE or len(data) > MAX_IMAGE_BYTES
             animated = getattr(img, "is_animated", False)
             if too_big and not animated:
+                img.draft("RGB", (MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))  # JPEGs decode straight to a smaller size
                 img = ImageOps.exif_transpose(img)  # phone photos store rotation in EXIF
                 img.thumbnail((MAX_IMAGE_EDGE, MAX_IMAGE_EDGE))
                 if img.mode not in ("RGB", "L"):
+                    rgba = img.convert("RGBA")
                     background = Image.new("RGB", img.size, "white")
-                    background.paste(img, mask=img.convert("RGBA").split()[-1])
+                    background.paste(rgba, mask=rgba.getchannel("A"))
                     img = background
                 out = io.BytesIO()
                 img.save(out, format="JPEG", quality=85, optimize=True)
                 data, media_type = out.getvalue(), "image/jpeg"
+        except FileError:
+            raise
         except (OSError, ValueError, Image.DecompressionBombError) as exc:
             raise FileError(f"“{name}” doesn't look like a working image.") from exc
 
@@ -106,23 +115,41 @@ def _docx_text(data: bytes) -> str:
     return "\n".join(lines)
 
 
+def _check_zip(name: str, data: bytes) -> None:
+    """Refuse Word/PowerPoint files that would unpack to an enormous size."""
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        if sum(info.file_size for info in archive.infolist()) > MAX_UNZIPPED_BYTES:
+            raise FileError(f"“{name}” is too big to open. Try saving it as PDF.")
+
+
+def _shape_lines(shapes) -> list:
+    """Text from slide shapes, including tables and shapes inside groups."""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    lines = []
+    for shape in shapes:
+        if getattr(shape, "shape_type", None) == MSO_SHAPE_TYPE.GROUP:
+            lines.extend(_shape_lines(shape.shapes))
+            continue
+        if shape.has_text_frame:
+            text = shape.text_frame.text.strip()
+            if text:
+                lines.append(text)
+        if getattr(shape, "has_table", False) and shape.has_table:
+            for row in shape.table.rows:
+                cells = [c.text.strip() for c in row.cells]
+                if any(cells):
+                    lines.append(" | ".join(cells))
+    return lines
+
+
 def _pptx_text(data: bytes) -> str:
     from pptx import Presentation
 
     prs = Presentation(io.BytesIO(data))
     slides = []
     for number, slide in enumerate(prs.slides, start=1):
-        lines = [f"--- Slide {number} ---"]
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                text = shape.text_frame.text.strip()
-                if text:
-                    lines.append(text)
-            if getattr(shape, "has_table", False) and shape.has_table:
-                for row in shape.table.rows:
-                    cells = [c.text.strip() for c in row.cells]
-                    if any(cells):
-                        lines.append(" | ".join(cells))
+        lines = [f"--- Slide {number} ---", *_shape_lines(slide.shapes)]
         if slide.has_notes_slide:
             notes = slide.notes_slide.notes_text_frame.text.strip()
             if notes:
@@ -132,12 +159,12 @@ def _pptx_text(data: bytes) -> str:
 
 
 def _decode_text(data: bytes) -> str:
-    for encoding in ("utf-8-sig", "utf-16"):
-        try:
-            return data.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return data.decode("latin-1")
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):  # only treat as UTF-16 when it says so
+        return data.decode("utf-16", errors="replace")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")  # older Windows text files
 
 
 def to_content_blocks(files):
@@ -175,12 +202,16 @@ def to_content_blocks(files):
 
         try:
             if ext == ".docx":
+                _check_zip(name, data)
                 text = _docx_text(data)
             elif ext == ".pptx":
+                _check_zip(name, data)
                 text = _pptx_text(data)
             else:
                 text = _decode_text(data)
-        except (zipfile.BadZipFile, KeyError, ValueError) as exc:
+        except FileError:
+            raise
+        except Exception as exc:  # any parser failure on an uploaded file is the file's problem
             raise FileError(f"StudyBuddy couldn't read “{name}”. Try saving it as PDF.") from exc
         if not text.strip():
             raise FileError(f"“{name}” doesn't have any text StudyBuddy can read. If it's scanned, try uploading it as a PDF or photo.")

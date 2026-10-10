@@ -132,16 +132,24 @@ StudyBuddy is running **without an AI key**, so this is a sample answer. Ask who
 - **Inputs:** carbon dioxide + water + light energy
 - **Outputs:** glucose + oxygen
 
-\[ 6CO_2 + 6H_2O \xrightarrow{\text{light}} C_6H_{12}O_6 + 6O_2 \]
+\[ \mathrm{6CO_2 + 6H_2O \xrightarrow{light} C_6H_{12}O_6 + 6O_2} \]
 
 | Part of the leaf | Job |
 |---|---|
-| Stomata | Let CO\(_2\) in and O\(_2\) out |
+| Stomata | Let \(\mathrm{CO_2}\) in and \(\mathrm{O_2}\) out |
 | Chloroplasts | Where photosynthesis happens |
 
 ### Key points to remember
 1. Light energy is turned into chemical energy.
 2. Oxygen is released as a by-product.
+
+**Check your understanding:** what gas do plants give out?
+
+<details><summary>Show answer</summary>
+
+Oxygen \(\mathrm{O_2}\) – it comes from splitting water molecules.
+
+</details>
 """
 
 DEMO_QUIZ = {

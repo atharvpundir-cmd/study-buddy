@@ -29,4 +29,4 @@ if [ ! -f .env ]; then
   echo ""
 fi
 
-exec .venv/bin/python app.py
+exec .venv/bin/python app.py --open

@@ -69,8 +69,9 @@ Put these in `.env` (on your computer) or in your host's environment variables.
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Your Anthropic API key. Without it, StudyBuddy runs in demo mode. | – |
 | `STUDY_BUDDY_ACCESS_CODE` | A class code students must enter first. Strongly recommended online. | off |
-| `STUDY_BUDDY_RATE_LIMIT` | Requests allowed per person, as `requests/seconds`. `0` turns it off. | `30/600` |
-| `STUDY_BUDDY_TRUST_PROXY` | Set to `1` behind a proxy/host (Render, Railway, Fly…) so each student is rate-limited separately. | off |
+| `STUDY_BUDDY_RATE_LIMIT` | Requests allowed per student (per browser), as `requests/seconds`. `0` turns it off. | `30/600` |
+| `STUDY_BUDDY_NETWORK_RATE_LIMIT` | Requests allowed per internet connection. A whole class often shares one school connection, so keep this well above the per-student limit. `0` turns it off. | `300/600` |
+| `STUDY_BUDDY_TRUST_PROXY` | How many proxies sit in front of the app. Set to `1` on hosts like Render, Railway or Fly so each student is rate-limited separately. Leave it off if people connect directly. | off |
 | `STUDY_BUDDY_MODEL` | Which Claude model to use. | `claude-opus-5` |
 | `STUDY_BUDDY_DEMO` | `1` forces demo mode, `0` forces real AI. | auto |
 | `PORT` / `HOST` | Where the local server listens. | `5000` / `127.0.0.1` |

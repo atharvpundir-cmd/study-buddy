@@ -212,6 +212,58 @@ def test_rate_limit(client, monkeypatch):
     assert "break" in blocked.get_json()["error"]
 
 
+def test_rate_limit_is_per_browser_with_network_cap(client, monkeypatch):
+    monkeypatch.setattr(app_module, "limiter", RateLimiter(2, 60))
+    monkeypatch.setattr(app_module, "network_limiter", RateLimiter(5, 60))
+    ask = lambda browser: client.post("/api/practice", data={"mode": "quiz", "text": "x"}, headers={"X-Client-Id": browser}).status_code
+    # Two classmates on the same school connection each get their own allowance.
+    assert [ask("browser-aaaa1111"), ask("browser-aaaa1111"), ask("browser-aaaa1111")] == [200, 200, 429]
+    assert [ask("browser-bbbb2222"), ask("browser-bbbb2222")] == [200, 200]
+    # Inventing new IDs doesn't get round the per-network cap (5 allowed in total).
+    assert ask("browser-cccc3333") == 200
+    response = client.post("/api/practice", data={"mode": "quiz", "text": "x"}, headers={"X-Client-Id": "browser-dddd4444"})
+    assert response.status_code == 429
+    assert "busy on your network" in response.get_json()["error"]
+
+
+def test_long_reply_allowed_in_history(client):
+    long_notes = "Notes line.\n" * 10_000  # ~120k characters, more than a student may type
+    history = [
+        {"role": "user", "content": "Please make study notes from my material."},
+        {"role": "assistant", "content": long_notes},
+        {"role": "user", "content": "Explain the first point"},
+    ]
+    response = client.post("/api/generate", data={"mode": "chat", "history": json.dumps(history)})
+    assert response.status_code == 200
+    too_long = [{"role": "user", "content": "x" * 50_001}]
+    assert client.post("/api/generate", data={"mode": "chat", "history": json.dumps(too_long)}).status_code == 400
+
+
+def test_proxy_count():
+    assert app_module._proxy_count("") == 0
+    assert app_module._proxy_count("1") == 1
+    assert app_module._proxy_count("true") == 1
+    assert app_module._proxy_count("2") == 2
+    assert app_module._proxy_count("nonsense") == 0
+
+
+def test_proxy_fix_uses_address_the_proxy_saw():
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    seen = {}
+    flask_app = app_module.Flask("probe")
+
+    @flask_app.get("/ip")
+    def ip():
+        seen["ip"] = app_module.request.remote_addr
+        return "ok"
+
+    flask_app.wsgi_app = ProxyFix(flask_app.wsgi_app, x_for=1)
+    # A student fakes the first entry; the trusted proxy appended the real address last.
+    flask_app.test_client().get("/ip", headers={"X-Forwarded-For": "1.2.3.4, 203.0.113.9"})
+    assert seen["ip"] == "203.0.113.9"
+
+
 def test_rate_limiter_spec():
     assert RateLimiter.from_spec("0").retry_after("a") == 0
     limiter = RateLimiter.from_spec("1/60")
@@ -282,6 +334,57 @@ def test_small_image_kept_large_image_shrunk():
 def test_file_errors(name, data, message):
     with pytest.raises(files.FileError, match=message):
         files.to_content_blocks([(name, data)])
+
+
+def test_text_decoding():
+    windows = "café – naïve".encode("cp1252")
+    assert files._decode_text(windows) == "café – naïve"
+    assert files._decode_text("hi".encode("utf-16")) == "hi"  # Python adds the byte-order mark
+    assert files._decode_text(b"plain ascii") == "plain ascii"
+
+
+def test_zip_bomb_rejected(monkeypatch):
+    monkeypatch.setattr(files, "MAX_UNZIPPED_BYTES", 1000)
+    with pytest.raises(files.FileError, match="too big to open"):
+        files.to_content_blocks([("big.docx", make_docx("x" * 5000))])
+
+
+def test_huge_image_rejected_before_decoding(monkeypatch):
+    monkeypatch.setattr(files, "MAX_IMAGE_PIXELS", 100 * 100)
+    with pytest.raises(files.FileError, match="too big"):
+        files.to_content_blocks([("huge.png", make_png(200, 200))])
+
+
+def test_palette_and_cmyk_images_convert():
+    for mode, ext, fmt in (("P", ".png", "PNG"), ("LA", ".png", "PNG"), ("CMYK", ".jpg", "JPEG")):
+        buf = io.BytesIO()
+        Image.new(mode, (2000, 1000)).save(buf, format=fmt)
+        blocks = files.to_content_blocks([("img" + ext, buf.getvalue())])
+        assert blocks[1]["source"]["media_type"] == "image/jpeg"
+
+
+def test_pptx_group_shapes():
+    buf = io.BytesIO()
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    group = slide.shapes.add_group_shape()
+    box = group.shapes.add_textbox(0, 0, 100, 100)
+    box.text_frame.text = "Hidden in a group"
+    prs.save(buf)
+    [block] = files.to_content_blocks([("g.pptx", buf.getvalue())])
+    assert "Hidden in a group" in block["source"]["data"]
+
+
+def test_corrupt_docx_xml_is_friendly():
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(make_docx("ok"))) as src, zipfile.ZipFile(buf, "w") as dst:
+        for item in src.infolist():
+            data = b"<not xml" if item.filename == "word/document.xml" else src.read(item)
+            dst.writestr(item, data)
+    with pytest.raises(files.FileError, match="couldn't read"):
+        files.to_content_blocks([("bad.docx", buf.getvalue())])
 
 
 def test_too_many_files():

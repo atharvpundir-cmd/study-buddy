@@ -8,6 +8,18 @@
     set(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } },
   };
 
+  // A random ID for this browser, so a class sharing one internet connection gets a fair
+  // share each from the server's rate limit. It identifies nobody.
+  function browserId() {
+    let id = store.get("sb-id");
+    if (!id || !/^[A-Za-z0-9-]{8,64}$/.test(id)) {
+      id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+      store.set("sb-id", id);
+    }
+    return id;
+  }
+
   const TITLES = {
     notes: "📝 Your notes", summary: "📋 Summary", explain: "💡 Explanation",
     quiz: "❓ Quiz", flashcards: "🃏 Flashcards", chat: "💬 Ask a tutor",
@@ -33,6 +45,7 @@
     config: DEFAULT_CONFIG,
     level: store.get("sb-level"),
     code: store.get("sb-code") || "",
+    clientId: browserId(),
     files: [],
     busy: false,
     controller: null,
@@ -77,29 +90,48 @@
 
   const MATH_RE = /(```[\s\S]*?(?:```|$)|`[^`\n]*`)|\\\[([\s\S]+?)\\\]|\$\$([\s\S]+?)\$\$|\\\(([\s\S]+?)\\\)/g;
 
+  function mathHtml(m) {
+    if (!window.katex) return escapeHtml(m.display ? "\\[" + m.tex + "\\]" : "\\(" + m.tex + "\\)");
+    try {
+      return window.katex.renderToString(m.tex, { displayMode: m.display, throwOnError: false });
+    } catch (e) {
+      return escapeHtml(m.tex);
+    }
+  }
+
   function renderMarkdown(src, inline) {
     if (!libsReady()) {
       return inline ? escapeHtml(src) : escapeHtml(src).replace(/\n/g, "<br>");
     }
+    // Maths is swapped for placeholders so Markdown can't mangle it, then rendered with KaTeX.
+    // The token is random so text in the AI's answer can't imitate it.
+    const token = "KXM" + Math.random().toString(36).slice(2, 10);
     const maths = [];
     const protectedSrc = src.replace(MATH_RE, (match, code, d1, d2, i1) => {
       if (code) return match;
       const display = d1 !== undefined || d2 !== undefined;
       maths.push({ tex: display ? (d1 !== undefined ? d1 : d2) : i1, display });
-      return "KXMATH" + (maths.length - 1) + "XK";
+      return token + (maths.length - 1) + "X";
     });
     const raw = inline ? window.marked.parseInline(protectedSrc) : window.marked.parse(protectedSrc);
     const safe = window.DOMPurify.sanitize(raw);
-    return safe.replace(/KXMATH(\d+)XK/g, (_, i) => {
-      const m = maths[Number(i)];
-      if (!m) return "";
-      if (!window.katex) return escapeHtml(m.display ? "\\[" + m.tex + "\\]" : "\\(" + m.tex + "\\)");
-      try {
-        return window.katex.renderToString(m.tex, { displayMode: m.display, throwOnError: false });
-      } catch (e) {
-        return escapeHtml(m.tex);
-      }
+    if (!maths.length) return safe;
+
+    // Only replace placeholders in text, never inside attributes such as a link's href.
+    const template = document.createElement("template");
+    template.innerHTML = safe;
+    const pattern = new RegExp(token + "(\\d+)X", "g");
+    const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    while (walker.nextNode()) {
+      if (walker.currentNode.nodeValue.indexOf(token) >= 0) textNodes.push(walker.currentNode);
+    }
+    textNodes.forEach((node) => {
+      const span = document.createElement("span");
+      span.innerHTML = escapeHtml(node.nodeValue).replace(pattern, (_, i) => (maths[Number(i)] ? mathHtml(maths[Number(i)]) : ""));
+      node.replaceWith(...span.childNodes);
     });
+    return template.innerHTML;
   }
 
   // Re-rendering on every streamed chunk is wasteful; do it at most once per frame.
@@ -226,6 +258,14 @@
   }
 
   function askForCode(wasWrong) {
+    if (typeof els.codeDialog.showModal !== "function") {
+      // Very old browsers (e.g. iPadOS before 15.4) have no <dialog>.
+      const code = (window.prompt((wasWrong ? "That code didn't work. " : "") + "Enter your class code:") || "").trim();
+      if (!code) return Promise.resolve(false);
+      state.code = code;
+      store.set("sb-code", code);
+      return Promise.resolve(true);
+    }
     return new Promise((resolve) => {
       els.codeError.hidden = !wasWrong;
       els.codeInput.value = "";
@@ -251,7 +291,9 @@
     for (let attempt = 0; attempt < 3; attempt++) {
       let response;
       try {
-        response = await fetch(url, { method: "POST", body: form, signal, headers: state.code ? { "X-Access-Code": state.code } : {} });
+        const headers = { "X-Client-Id": state.clientId };
+        if (state.code) headers["X-Access-Code"] = state.code;
+        response = await fetch(url, { method: "POST", body: form, signal, headers });
       } catch (err) {
         if (err.name === "AbortError") throw err;
         throw new FriendlyError("Can't connect to StudyBuddy. Check your internet and try again.");
@@ -652,7 +694,7 @@
       state.chat.push({ role: "assistant", content: reply });
       setStatus("");
     } catch (err) {
-      const partial = reply || err.partial || "";
+      const partial = (reply || err.partial || "").trim();
       if (partial) {
         bubble.innerHTML = renderMarkdown(partial);
         state.chat.push({ role: "assistant", content: partial });
